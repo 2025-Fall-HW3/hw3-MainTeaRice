@@ -57,12 +57,13 @@ class EqualWeightPortfolio:
     def calculate_weights(self):
         # Get the assets by excluding the specified column
         assets = df.columns[df.columns != self.exclude]
-        self.portfolio_weights = pd.DataFrame(index=df.index, columns=df.columns)
+        self.portfolio_weights = pd.DataFrame(0.0,index=df.index, columns=df.columns)
 
         """
         TODO: Complete Task 1 Below
         """
-
+        n = len(assets)
+        self.portfolio_weights.loc[:, assets] = 1.0 / n
         """
         TODO: Complete Task 1 Above
         """
@@ -114,7 +115,28 @@ class RiskParityPortfolio:
         TODO: Complete Task 2 Below
         """
 
+        # 跟 Problem 3 一樣，用 rolling window: [i - lookback, i) 來算
+        for i in range(self.lookback + 1, len(df)):
+            # 過去 lookback 天的 returns（不含當天）
+            R_n = df_returns[assets].iloc[i - self.lookback : i]
 
+            # 各資產的波動 σ_i（標準差）
+            sigma = R_n.std()
+
+            # 風險平價：inverse volatility
+            inv_sigma = 1.0 / sigma
+
+            # 避免除以 0
+            inv_sigma.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+            # 正規化成權重，使 11 個 sector 權重和 = 1
+            w = inv_sigma / inv_sigma.sum()
+
+            # 把這一天的權重寫進對應的日期
+            self.portfolio_weights.loc[df.index[i], assets] = w.values
+
+        # SPY 欄位永遠不配置
+        self.portfolio_weights[self.exclude] = 0.0
 
         """
         TODO: Complete Task 2 Above
@@ -188,10 +210,20 @@ class MeanVariancePortfolio:
                 TODO: Complete Task 3 Below
                 """
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                # 決策變數 w：各資產權重，0 <= w_i <= 1
+                w = model.addMVar(n, name="w", lb=0.0, ub=1.0)
+
+                # 預期報酬項 mu^T w
+                ret_expr = mu @ w
+
+                # 風險項 w^T Sigma w
+                risk_expr = w @ Sigma @ w
+
+                # 目標：max (mu^T w - 0.5 * gamma * w^T Sigma w)
+                model.setObjective(ret_expr - 0.5 * gamma * risk_expr, gp.GRB.MAXIMIZE)
+
+                # 約束：權重總和 = 1
+                model.addConstr(w.sum() == 1, name="budget")
 
                 """
                 TODO: Complete Task 3 Above
